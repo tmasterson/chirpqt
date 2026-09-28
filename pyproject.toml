@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chirpQt"
+authors = [
+    {name = "Tom Masterson", email = "kd7cyu@gmail.com"}
+]
+description = "Rewrite of the chirp program using qt"
+readme = "README.md"
+classifiers = [
+    "Private :: Do Not Upload",
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Environment :: Win32",
+    "License :: OSI Approved :: GnU General Public License v3 (GPLv3)"
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pyside6",
+    "pyserial",
+    "requests",
+    "suds",
+    "yattag",
+    "lark",
+]
+dynamic = ["version"]
+
+[tool.setuptools_scm]
+version_file = "src/chirpQt/__version__.py"
+
+[tools.setup.package-data]
+"chirpQt" = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["src/tests"]
+log_file = "pytest.log"
+log_file_mode = "w"
+required_plugins = ["pytest-qt"]
+qt_api = "pyside6"
+addopts = [
+    "--import-mode=importlib",
+]
