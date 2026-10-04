@@ -60,3 +60,14 @@ Exceptions that have been observed in testing formats which are
 invalid in this context are caught, and the default format is used.
 
 ========
+Local web interface
+The experimental browser interface is started with the `chirpqt-web`
+command. It serves its static assets and API from the same Python process
+bound to `127.0.0.1`; do not change this to a network-facing bind without
+adding authentication and reviewing the local-device security model.
+
+The API delegates file parsing, memory validation, and serial clone operations
+to the registered Python radio drivers. Hardware transfer testing requires a
+radio and serial interface; API tests use file-backed CSV images instead.
+
+========
