@@ -1,6 +1,7 @@
 **~
 **#*
 **.pyc
+**.pyi
 **.orig
 **.rej
 .venv
