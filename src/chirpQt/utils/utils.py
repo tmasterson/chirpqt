@@ -1,5 +1,24 @@
 
 
+"""Shared radio utilities and radio mapping implementations."""
+
+import base64
+import json
+import logging
+import re
+import sys
+
+from chirpQt import errors, memmap
+from chirpQt.__version__ import version
+from chirpQt.errors import ImmutableValueError
+from chirpQt.interfaces import DetectableInterface
+from chirpQt.utils.common import CHARSET_ASCII, format_freq, parse_freq
+from chirpQt.utils.memory import Memory
+from chirpQt.utils.radio import Radio
+
+
+LOG = logging.getLogger(__name__)
+
 
 class MappingModel(object):
     """Base class for a memory mapping model."""
@@ -71,7 +90,10 @@ class MemoryMapping(object):
 
     def __eq__(self, other):
         """Test to see if other equals this oject."""
+        if not isinstance(other, MemoryMapping):
+            return NotImplemented
         return self.get_index() == other.get_index()
+
 
 class Bank(MemoryMapping):
     """Base class for a radio's Bank."""
@@ -107,12 +129,20 @@ class StaticBankModel(BankModel):
 
     def __init__(self, radio, name='Banks', banks=10):
         """Construct object."""
+        if not isinstance(banks, int) or isinstance(banks, bool) or banks <= 0:
+            raise ValueError('banks must be a positive integer')
         super().__init__(radio, name=name)
         self._num_banks = banks
         self._rf = radio.get_features()
-        self._banks = []
-        for i in range(self._num_banks):
-            self._banks.append(StaticBank(self, i + 1, 'Bank'))
+        lo, hi = self._rf.memory_bounds
+        if (not isinstance(lo, int) or isinstance(lo, bool) or
+                not isinstance(hi, int) or isinstance(hi, bool) or hi < lo):
+            raise ValueError(
+                'memory_bounds must be an ordered pair of integers')
+        self._banks = [
+            StaticBank(self, i + 1, 'Bank')
+            for i in range(self._num_banks)
+        ]
 
     def get_num_mappings(self):
         """Return number of mappings."""
@@ -125,16 +155,24 @@ class StaticBankModel(BankModel):
     def get_mapping_memories(self, bank):
         """Return the memories in a bank."""
         lo, hi = self._rf.memory_bounds
-        count = (hi - lo + 1) / self._num_banks
-        offset = lo + ((bank.get_index() - 1) * count)
-        return [self._radio.get_memory(offset + i) for i in range(count)]
+        index = bank.get_index() - 1
+        if not 0 <= index < self._num_banks:
+            raise ValueError(f'Unknown bank index: {bank.get_index()}')
+        total = hi - lo + 1
+        start = lo + (index * total // self._num_banks)
+        stop = lo + ((index + 1) * total // self._num_banks)
+        return [self._radio.get_memory(number)
+                for number in range(start, stop)]
 
     def get_memory_mappings(self, memory):
         """Return the mappings a memory is in."""
         lo, hi = self._rf.memory_bounds
-        mems = hi - lo + 1
-        count = mems // self._num_banks
-        return [self._banks[(memory.number - lo) // count]]
+        if not lo <= memory.number <= hi:
+            raise ValueError(
+                f'Memory number is outside bounds: {memory.number}')
+        total = hi - lo + 1
+        index = (((memory.number - lo + 1) * self._num_banks) - 1) // total
+        return [self._banks[index]]
 
     def remove_memory_from_mapping(self, memory, mapping):
         """Remove a memory from a mapping."""
@@ -145,26 +183,10 @@ class StaticBankModel(BankModel):
         raise NotImplementedError(self.MSG)
 
 
-
-
 class MTOBankModel(BankModel):
     """A bank model where one memory can be in multiple banks at once."""
 
     pass
-
-
-def console_status(status):
-    """Write a status object to the console."""
-    import logging
-    from chirpQt import logger
-    if not logger.is_visible(logging.WARN):
-        return
-    import sys
-    import os
-    sys.stdout.write('\r%s' % status)
-    if status.cur == status.max:
-        sys.stdout.write(os.linesep)
-
 
 
 class ExternalMemoryProperties:
@@ -484,7 +506,7 @@ class Status:
             pct = (self.cur / float(self.max)) * 100
             nticks = int(pct) // 10
             ticks = '=' * nticks
-        except ValueError:
+        except (ValueError, ZeroDivisionError):
             pct = 0.0
             ticks = '?' * 10
 
@@ -635,11 +657,11 @@ def fix_rounded_step(freq):
                                   format_freq(freq))
 
 
-def _name(name, len, just_upper):
-    """Justify @name to @len, optionally converting to all uppercase."""
+def _name(name, size, just_upper):
+    """Justify @name to @size, optionally converting to all uppercase."""
     if just_upper:
         name = name.upper()
-    return name.ljust(len)[:len]
+    return name.ljust(size)[:size]
 
 
 def name6(name, just_upper=True):
@@ -692,8 +714,8 @@ def split_to_offset(mem, rxfreq, txfreq):
 
     This isbased on a separate rx/tx frequency.
     """
+    mem.freq = rxfreq
     if abs(txfreq - rxfreq) > to_MHz(70):
-        mem.freq = rxfreq
         mem.offset = txfreq
         mem.duplex = 'split'
     else:
@@ -702,6 +724,8 @@ def split_to_offset(mem, rxfreq, txfreq):
             mem.duplex = '-'
         elif offset > 0:
             mem.duplex = '+'
+        else:
+            mem.duplex = ''
         mem.offset = abs(offset)
 
 
@@ -799,13 +823,12 @@ def split_tone_encode(mem):
 
 
 def sanitize_string(astring, validcharset=CHARSET_ASCII, replacechar='*'):
-    """Sanitize strings removing invalid cahars."""
-    myfilter = ''.join(
-        [
-            [replacechar, chr(x)][chr(x) in validcharset]
-            for x in range(256)
-        ])
-    return astring.translate(myfilter)
+    """Replace invalid byte-range characters while preserving wider Unicode."""
+    validchars = set(validcharset)
+    return ''.join(
+        char if ord(char) > 255 or char in validchars else replacechar
+        for char in astring
+    )
 
 
 def is_version_newer(version):
@@ -822,20 +845,20 @@ def is_version_newer(version):
         LOG.debug('Parsed version %r to %r' % (v, ver))
         return ver
 
-    from chirpQt.__version__ import version
+    from chirpQt.__version__ import version as current_version
 
     try:
-        version = get_version(version)
+        candidate_version = get_version(version)
     except ValueError as e:
         LOG.error('Failed to parse version %r: %s' % (version, e))
-        version = (0,)
+        candidate_version = (0,)
     try:
-        my_version = get_version(version)
+        my_version = get_version(current_version)
     except ValueError as e:
-        LOG.error('Failed to parse my version %r: %s' % (version, e))
+        LOG.error('Failed to parse my version %r: %s' % (current_version, e))
         my_version = (0,)
 
-    return version > my_version
+    return candidate_version > my_version
 
 
 def http_user_agent():

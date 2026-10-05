@@ -148,3 +148,33 @@ def test_parse_power_invalid_input():
     """Test that we get a ValueError when string has something other than W."""
     with pytest.raises(ValueError):
         PowerLevel.parse_power('9.0S')
+
+
+@pytest.mark.parametrize(
+    ('text', 'label'),
+    [
+        (' 9w ', '9.0W'),
+        ('12.5 W', '12W'),
+        ('.5W', '0.5W'),
+        ('0W', '0.0W'),
+    ],
+)
+def test_parse_power_spacing_units_and_boundaries(text, label):
+    """Accept supported unit spelling, surrounding whitespace, and zero."""
+    assert str(PowerLevel.parse_power(text)) == label
+
+
+@pytest.mark.parametrize('text', ['', 'W', '-1W', '1.2.3W', '2 kW'])
+def test_parse_power_rejects_malformed_or_unsupported_units(text):
+    """Reject blank, negative, malformed, and unknown-unit specifications."""
+    with pytest.raises(ValueError):
+        PowerLevel.parse_power(text)
+
+
+def test_power_level_comparison_with_other_types():
+    """Return normal rich-comparison results for non-power operands."""
+    power = PowerLevel('test', dbm=10)
+
+    assert power != object()
+    with pytest.raises(TypeError):
+        _ = power < object()

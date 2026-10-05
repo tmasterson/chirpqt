@@ -15,6 +15,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import logging
+import os
+import sys
+
 from chirpQt.errors import (
         ImmutableValueError,
 )
@@ -26,9 +30,19 @@ from chirpQt.utils.common import (
         MODES,
         TONES,
         VALIDTONE,
-        console_status,
 )
 from chirpQt.utils.memory import Memory
+
+
+def console_status(status):
+    """Write a status object to the console when warning output is enabled."""
+    from chirpQt import logger
+
+    if not logger.is_visible(logging.WARN):
+        return
+    sys.stdout.write('\r%s' % status)
+    if status.cur == status.max:
+        sys.stdout.write(os.linesep)
 
 
 def BOOLEAN(v):
@@ -140,7 +154,7 @@ class RadioFeatures:
         if name.startswith('_'):
             self.__dict__[name] = val
             return
-        elif name not in list(self._valid_map.keys()):
+        elif name not in self._valid_map:
             raise ValueError("No such attribute `%s'" % name)
 
         try:
@@ -265,7 +279,7 @@ class RadioFeatures:
 
     def is_a_feature(self, name):
         """Return True if @name is a valid feature flag name."""
-        return name in list(self._valid_map.keys())
+        return name in self._valid_map
 
     def __getitem__(self, name):
         """Return an item."""
@@ -377,8 +391,8 @@ class Radio(object):
         if rf.valid_characters == rf.valid_characters.upper():
             # Radio only supports uppercase, so help out here
             name = name.upper()
-        return ''.join([x for x in name[:rf.valid_name_length]
-                        if x in rf.valid_characters])
+        return ''.join(x for x in name[:rf.valid_name_length]
+                       if x in rf.valid_characters)
 
     def get_sub_devices(self) -> list[tuple]:
         """Return a list of sub-device Radio objects.

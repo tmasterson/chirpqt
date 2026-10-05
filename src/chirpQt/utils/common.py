@@ -15,18 +15,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import base64
-import json
-import logging
-import re
-import sys
-
-from chirpQt import errors, memmap
-from chirpQt.__version__ import version
-
-LOG = logging.getLogger(__name__)
-
-
 # 50 Tones
 TONES = (
     67.0, 69.3, 71.9, 74.4, 77.0, 79.7, 82.5,
@@ -39,9 +27,11 @@ TONES = (
     225.7, 229.1, 233.6, 241.8, 250.3, 254.1,
 )
 
-OLD_TONES = tuple(x for x in sorted(
-    set(TONES) - set([159.8, 165.5, 171.3, 177.3, 183.5, 189.9,
-                      196.6, 199.5, 206.5, 229.1, 254.1])))
+OLD_TONES = tuple(
+    tone for tone in TONES
+    if tone not in {159.8, 165.5, 171.3, 177.3, 183.5, 189.9, 196.6,
+                    199.5, 206.5, 229.1, 254.1}
+)
 
 
 def VALIDTONE(v):
@@ -68,10 +58,12 @@ DTCS_CODES = (
 )
 
 # 512 Possible DTCS Codes
-ALL_DTCS_CODES = tuple([((a * 100) + (b * 10) + c)
-                        for a in range(0, 8)
-                        for b in range(0, 8)
-                        for c in range(0, 8)])
+ALL_DTCS_CODES = tuple(
+    (a * 100) + (b * 10) + c
+    for a in range(8)
+    for b in range(8)
+    for c in range(8)
+)
 
 CROSS_MODES = (
     'Tone->Tone',
@@ -173,29 +165,26 @@ APRS_SYMBOLS = (
 def parse_freq(freqstr: str) -> int:
     """Parse a frequency string and return the value in integral Hz."""
     freqstr = freqstr.strip()
-    if freqstr == '':
+    if not freqstr:
         return 0
-    elif freqstr.endswith(' MHz'):
-        return parse_freq(freqstr.split(' ')[0])
+    if freqstr.endswith(' MHz'):
+        freqstr = freqstr[:-4]
     elif freqstr.endswith(' kHz'):
-        return int(freqstr.split(' ')[0]) * 1000
+        return int(freqstr[:-4]) * 1000
 
-    if '.' in freqstr:
-        _mhz, _khz = freqstr.split('.')
-        if _mhz == '':
-            _mhz = '0'
-        _khz = _khz.ljust(6, '0')
-        if len(_khz) > 6:
-            raise ValueError('Invalid kHz value: %s', _khz)
-        mhz = int(_mhz) * 1000000
-        khz = int(_khz)
-    else:
-        mhz = int(freqstr) * 1000000
-        khz = 0
+    mhz, separator, fractional = freqstr.partition('.')
+    if not separator:
+        return int(mhz) * 1000000
+    if not mhz:
+        mhz = '0'
+    if len(fractional) > 6:
+        raise ValueError(f'Invalid kHz value: {fractional}')
 
-    return mhz + khz
+    return (int(mhz) * 1000000) + int(fractional.ljust(6, '0'))
 
 
 def format_freq(freq: int) -> str:
     """Format a frequency given in Hz as a string."""
-    return f'{freq/1000000:.06f}'
+    sign = '-' if freq < 0 else ''
+    mhz, hz = divmod(abs(freq), 1000000)
+    return f'{sign}{mhz}.{hz:06d}'

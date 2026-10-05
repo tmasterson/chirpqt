@@ -34,6 +34,7 @@ from chirpQt.utils.common import (
         TONE_MODES,
         VALIDTONE,
         format_freq,
+        parse_freq,
 )
 from chirpQt.utils.powerlevel import PowerLevel
 
@@ -108,27 +109,28 @@ class Memory:
         self.empty = empty
         self.immutable = []
         self.dv_mem = dv_mem
+        self.extra = []
 
     _valid_map: dict[str, Any] = {
         'rtone':          VALIDTONE,
         'ctone':          VALIDTONE,
-        'dtcs':           ALL_DTCS_CODES,
-        'rx_dtcs':        ALL_DTCS_CODES,
-        'tmode':          TONE_MODES,
-        'dtcs_polarity':  ['NN', 'NR', 'RN', 'RR'],
-        'cross_mode':     CROSS_MODES,
-        'mode':           MODES,
-        'duplex':         ['', '+', '-', 'split', 'off'],
-        'skip':           SKIP_VALUES,
-        'empty':          [True, False],
-        'dv_code':        [x for x in range(0, 100)],
+        'dtcs':           frozenset(ALL_DTCS_CODES),
+        'rx_dtcs':        frozenset(ALL_DTCS_CODES),
+        'tmode':          frozenset(TONE_MODES),
+        'dtcs_polarity':  frozenset(('NN', 'NR', 'RN', 'RR')),
+        'cross_mode':     frozenset(CROSS_MODES),
+        'mode':           frozenset(MODES),
+        'duplex':         frozenset(('', '+', '-', 'split', 'off')),
+        'skip':           frozenset(SKIP_VALUES),
+        'empty':          frozenset((True, False)),
+        'dv_code':        frozenset(range(100)),
     }
 
     def __repr__(self) -> str:
-        """Stringifyu this memory location."""
+        """Return a debug representation of this memory."""
         ident, vals = self.debug_dump()
-        return (f'<Memory {ident}: '
-                f"{','.join('{item[0]!s={item[1]!r' for item in vals)}>")
+        details = ', '.join(f'{key}={value!r}' for key, value in vals)
+        return f'<Memory {ident}: {details}>'
 
     def debug_diff(self, other: object, delim: str = '/') -> str:
         """Get debug info."""
@@ -148,8 +150,8 @@ class Memory:
                 diffs.append(f'{k}={myval!r}{delim}{omval!r}')
         return ','.join(diffs)
 
-    def debug_dump(self):
-        """Emit debug infor."""
+    def debug_dump(self) -> tuple[str, list[tuple[str, Any]]]:
+        """Return the memory identifier and its debug values."""
         vals = [(k, v) for k, v in self.__dict__.items()
                 if k not in ('extra', 'number', 'extd_number')]
         for extra in self.extra:
@@ -161,18 +163,16 @@ class Memory:
         return ident, vals
 
     def dupe(self) -> object:
-        """Return a deep copy of @self."""
+        """Return a shallow copy of @self."""
         mem = self.__class__()
-        for k, v in list(self.__dict__.items()):
-            mem.__dict__[k] = v
+        mem.__dict__.update(self.__dict__)
         return mem
 
     def clone(self, source: object) -> None:
         """Absorb all of the properties of @source."""
         if not isinstance(source, Memory):
             return NotImplemented
-        for k, v in list(source.__dict__.items()):
-            self.__dict__[k] = v
+        self.__dict__.update(source.__dict__)
 
     CSV_FORMAT = ['Location', 'Name', 'Frequency',
                   'Duplex', 'Offset', 'Tone',
@@ -195,7 +195,7 @@ class Memory:
             if callable(valid):
                 if not valid(val):
                     return False
-            elif val not in self._valid_map[name]:
+            elif val not in valid:
                 return False
         return True
 
@@ -258,11 +258,11 @@ class Memory:
             raise InvalidMemoryLocation('Non-CSV line')
 
         vals = line.split(SEPCHAR)
-        if len(vals) < 11:
+        if len(vals) < 15:
             raise InvalidDataError('CSV format error ' +
-                                   '(14 columns expected)')
+                                   '(15 columns expected)')
 
-        if vals[10] == 'DV':
+        if vals[12] == 'DV':
             mem = cls(dv_mem=True)
         else:
             mem = cls()
@@ -272,17 +272,20 @@ class Memory:
 
     def really_from_csv(self, vals: Any) -> bool:
         """Careful parsing of split-out @vals."""
+        if len(vals) < 15:
+            raise InvalidDataError('CSV format error (15 columns expected)')
+
         try:
             self.number = int(vals[0])
-        except Exception:
+        except (TypeError, ValueError):
             raise InvalidDataError(
                 f'Location {vals[0]} is not a valid integer')
 
         self.name = vals[1]
 
         try:
-            self.freq = float(vals[2])
-        except Exception:
+            self.freq = parse_freq(vals[2])
+        except (TypeError, ValueError):
             raise InvalidDataError('Frequency is not a valid number')
 
         if vals[3].strip() in ['+', '-', '']:
@@ -291,8 +294,8 @@ class Memory:
             raise InvalidDataError('Duplex is not +,-, or empty')
 
         try:
-            self.offset = float(vals[4])
-        except Exception:
+            self.offset = parse_freq(vals[4])
+        except (TypeError, ValueError):
             raise InvalidDataError('Offset is not a valid number')
 
         self.tmode = vals[5]
@@ -301,28 +304,28 @@ class Memory:
 
         try:
             self.rtone = float(vals[6])
-        except Exception:
+        except (TypeError, ValueError):
             raise InvalidDataError('rTone is not a valid number')
         if self.rtone not in TONES:
             raise InvalidDataError('rTone is not valid')
 
         try:
             self.ctone = float(vals[7])
-        except Exception:
+        except (TypeError, ValueError):
             raise InvalidDataError('cTone is not a valid number')
         if self.ctone not in TONES:
             raise InvalidDataError('cTone is not valid')
 
         try:
             self.dtcs = int(vals[8], 10)
-        except Exception:
+        except (TypeError, ValueError):
             raise InvalidDataError('DTCS code is not a valid number')
         if self.dtcs not in DTCS_CODES:
             raise InvalidDataError('DTCS code is not valid')
 
         try:
-            self.rx_dtcs = int(vals[8], 10)
-        except Exception:
+            self.rx_dtcs = int(vals[10], 10)
+        except (TypeError, ValueError):
             raise InvalidDataError('DTCS Rx code is not a valid number')
         if self.rx_dtcs not in DTCS_CODES:
             raise InvalidDataError('DTCS Rx code is not valid')
@@ -332,19 +335,17 @@ class Memory:
         else:
             raise InvalidDataError('DtcsPolarity is not valid')
 
-        if vals[10] in MODES:
-            self.mode = vals[10]
+        self.cross_mode = vals[11]
+        if vals[12] in MODES:
+            self.mode = vals[12]
         else:
             raise InvalidDataError('Mode is not valid')
 
         try:
-            self.tuning_step = float(vals[11])
-        except Exception:
+            self.tuning_step = float(vals[13])
+        except (TypeError, ValueError):
             raise InvalidDataError('Tuning step is invalid')
 
-        try:
-            self.skip = vals[12]
-        except Exception:
-            raise InvalidDataError('Skip value is not valid')
+        self.skip = vals[14]
 
         return True

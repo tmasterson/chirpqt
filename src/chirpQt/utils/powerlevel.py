@@ -21,6 +21,7 @@ import math
 import re
 
 LOG = logging.getLogger(__name__)
+_POWER_RE = re.compile(r'\s*([0-9.]+)\s*([Ww]?)\s*')
 
 
 class PowerLevel:
@@ -86,13 +87,13 @@ class PowerLevel:
             return NotImplemented
         return float(self) == float(val)
 
-    def __lt__(self, val: object) -> float:
+    def __lt__(self, val: object) -> bool:
         """Test if one level is lt this level."""
         if not isinstance(val, PowerLevel):
             return NotImplemented
         return float(self) < float(val)
 
-    def __gt__(self, val: object) -> float:
+    def __gt__(self, val: object) -> bool:
         """Test if val is greater that current level."""
         if not isinstance(val, PowerLevel):
             return NotImplemented
@@ -107,21 +108,14 @@ class PowerLevel:
         return f'{self._label} ({int(self._power)} dbm)'
 
     @classmethod
-    def parse_power(self, powerstr: str) -> object:
+    def parse_power(cls, powerstr: str) -> 'PowerLevel':
         """Parse a power level."""
-        if powerstr.isdigit():
-            # All digits means watts
-            watts = float(powerstr)
-        else:
-            match = re.match(r'^\s*([0-9.]+)\s*([Ww]?)\s*$', powerstr)
-            if not match:
-                raise ValueError('Invalid power specification: %r' % powerstr)
-            if match.group(2).lower() in ('', 'w'):
-                watts = float(match.group(1))
-            else:
-                raise ValueError('Unknown power units in %r' % powerstr)
+        match = _POWER_RE.fullmatch(powerstr)
+        if not match:
+            raise ValueError('Invalid power specification: %r' % powerstr)
+        watts = float(match.group(1))
         if watts >= 10:
             formattedlabel = f'{int(watts)}W'
         else:
             formattedlabel = f'{watts:.1f}W'
-        return self(formattedlabel, watts=watts)
+        return cls(formattedlabel, watts=watts)
