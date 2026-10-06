@@ -34,9 +34,12 @@ class PrzemiennikiNet(base.NetworkResultRadio):
 
     def do_fetch(self, status, params):
         status.send_status(_('Querying'), 10)
-        if not params['range'] or int(params['range']) == 0:
-            params.pop('range')
-        LOG.debug('query params: %s' % str(params))
+        params = params.copy()
+        search_range = params.get('range')
+        if not search_range or int(search_range) == 0:
+            params.pop('range', None)
+        LOG.debug('query params: %s', params)
+        self._memories = []
         try:
             r = requests.get('http://przemienniki.net/export/chirpQt.csv',
                              headers=base.HEADERS,
@@ -61,9 +64,9 @@ class PrzemiennikiNet(base.NetworkResultRadio):
 
         status.send_status(_('Sorting'), 80)
 
-        self._memories = [csv.get_memory(x) for x in range(1, 999)
-                          if not csv.get_memory(x).empty]
-        if not any([params['latitude'], params['longitude']]):
+        self._memories = [memory for number in range(1, 999)
+                          if not (memory := csv.get_memory(number)).empty]
+        if not any((params.get('latitude'), params.get('longitude'))):
             LOG.debug('Sorting memories by name')
             self._memories.sort(key=lambda m: m.name)
             # Now renumber them

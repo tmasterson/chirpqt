@@ -30,7 +30,7 @@ def wipe_memory(_mem, byte):
 
 def do_download(radio, start, end, blocksize):
     """Initiate a download of @radio between @start and @end"""
-    image = b""
+    image = bytearray()
     for i in range(start, end, blocksize):
         cmd = struct.pack(">cHb", b"R", i, blocksize)
         LOG.debug(util.hexprint(cmd))
@@ -44,7 +44,7 @@ def do_download(radio, start, end, blocksize):
 
         radio.pipe.write(b"\x06")
         radio.pipe.read(1)
-        image += resp[4:]
+        image.extend(resp[4:])
 
         if radio.status_fn:
             status = chirp_common.Status()
@@ -53,7 +53,7 @@ def do_download(radio, start, end, blocksize):
             status.msg = "Cloning from radio"
             radio.status_fn(status)
 
-    return memmap.MemoryMapBytes(image)
+    return memmap.MemoryMapBytes(bytes(image))
 
 
 def do_upload(radio, start, end, blocksize):

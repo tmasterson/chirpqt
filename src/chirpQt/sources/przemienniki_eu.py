@@ -34,6 +34,7 @@ class PrzemiennikiEu(base.NetworkResultRadio):
 
     def do_fetch(self, status, params):
         status.send_status(_('Querying'), 10)
+        self._memories = []
         LOG.debug('query params: %s' % str(params))
         try:
             r = requests.get('https://przemienniki.eu/eksport-danych/chirp/',
@@ -59,8 +60,8 @@ class PrzemiennikiEu(base.NetworkResultRadio):
 
         status.send_status(_('Sorting'), 80)
 
-        self._memories = [csv.get_memory(x) for x in range(0, 999)
-                          if not csv.get_memory(x).empty]
+        self._memories = [memory for number in range(999)
+                          if not (memory := csv.get_memory(number)).empty]
         self._memories.sort(key=lambda m: m.name)
         for i, mem in enumerate(self._memories):
             mem.number = i + 1

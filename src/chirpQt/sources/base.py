@@ -1,14 +1,14 @@
 import logging
 import sys
 
-from chirpQt import CHIRP_VERSION
 from chirpQt import chirp_common
 from chirpQt import errors
+from chirpQt.__version__ import __version__
 
 LOG = logging.getLogger(__name__)
 HEADERS = {
     'User-Agent': 'chirp/%s Python %i.%i.%i %s' % (
-        CHIRP_VERSION,
+        __version__,
         sys.version_info.major, sys.version_info.minor, sys.version_info.micro,
         sys.platform),
 }

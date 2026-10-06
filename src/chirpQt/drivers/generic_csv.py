@@ -100,6 +100,7 @@ class CSVRadio(chirp_common.FileBackedRadio):
         # Persistence for comment lines
         # List of tuples of (previous_memory, comment)
         self._comments = []
+        self._cleaner_cache = {}
 
         self._filename = pipe
         if self._filename and os.path.exists(self._filename):
@@ -141,10 +142,16 @@ class CSVRadio(chirp_common.FileBackedRadio):
         This is useful for parsing other CSV dialects when multiple columns
         convert to a single Chirp column."""
 
-        for attr in dir(mem):
-            fname = "_clean_%s" % attr
-            if hasattr(self, fname):
-                mem = getattr(self, fname)(headers, line, mem)
+        cleaners = self._cleaner_cache.get(type(mem))
+        if cleaners is None:
+            cleaners = tuple(
+                getattr(self, '_clean_%s' % attr)
+                for attr in dir(mem)
+                if hasattr(self, '_clean_%s' % attr))
+            self._cleaner_cache[type(mem)] = cleaners
+
+        for cleaner in cleaners:
+            mem = cleaner(headers, line, mem)
 
         return mem
 
@@ -210,6 +217,7 @@ class CSVRadio(chirp_common.FileBackedRadio):
         good = 0
         lineno = 0
         last_number = -1
+        header = []
         for line in reader:
             # Skip (but stash) comment lines that start with #
             if line and line[0].startswith('#'):
@@ -240,7 +248,7 @@ class CSVRadio(chirp_common.FileBackedRadio):
                               lineno)
                     continue
                 if mem.number is None:
-                    raise Exception("Invalid Location field" % lineno)
+                    raise ValueError("Invalid Location field")
             except Exception as e:
                 LOG.error("Line %i: %s", lineno, e)
                 self.errors.append("Line %i: %s" % (lineno, e))
@@ -293,18 +301,14 @@ class CSVRadio(chirp_common.FileBackedRadio):
 
     def get_memory(self, number):
         try:
+            if number < 0:
+                raise IndexError
             return self.memories[number].dupe()
-        except:
+        except (IndexError, TypeError):
             raise errors.InvalidMemoryLocation("No such memory %s" % number)
 
     def _grow(self, target):
-        delta = target - len(self.memories)
-        if delta < 0:
-            return
-
-        delta += 1
-
-        for i in range(len(self.memories), len(self.memories) + delta + 1):
+        for i in range(len(self.memories), target + 1):
             mem = chirp_common.Memory()
             mem.empty = True
             mem.number = i
@@ -351,10 +355,10 @@ def find_csv_header(filedata):
         # Skip BOM
         filedata = filedata[1:]
     while filedata.startswith('#'):
-        filedata = filedata[filedata.find('\n') + 1:]
-    delims = ['', '"', "'"]
-    return any([filedata.startswith('%sLocation%s,' % (d, d))
-                for d in delims])
+        _, separator, filedata = filedata.partition('\n')
+        if not separator:
+            return False
+    return filedata.startswith(('Location,', '"Location",', "'Location',"))
 
 
 @directory.register

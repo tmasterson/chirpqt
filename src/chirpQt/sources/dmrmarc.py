@@ -38,6 +38,8 @@ class DMRMARCRadio(base.NetworkResultRadio):
 
     def do_fetch(self, status, params):
         status.send_status('Querying', 10)
+        self._repeaters = []
+        self._memories = []
         try:
             r = requests.get('https://radioid.net/api/dmr/repeater/',
                              headers=base.HEADERS,
@@ -50,9 +52,14 @@ class DMRMARCRadio(base.NetworkResultRadio):
             status.send_fail('Unable to query DMR-MARC')
             return
         status.send_status('Parsing', 20)
-        self._repeaters = r.json()['results']
-        self._memories = [self.make_memory(i)
-                          for i in range(0, len(self._repeaters))]
+        try:
+            self._repeaters = r.json()['results']
+            self._memories = [self.make_memory(i)
+                              for i in range(len(self._repeaters))]
+        except (KeyError, TypeError, ValueError) as e:
+            LOG.error('Failed to parse DMR-MARC response: %s', e)
+            status.send_fail('Unable to parse DMR-MARC response')
+            return
         status.send_end()
 
     def get_raw_memory(self, number):

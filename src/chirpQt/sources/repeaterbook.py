@@ -6,6 +6,7 @@ import math
 import os
 
 import requests
+import wx
 
 from chirpQt import chirp_common
 from chirpQt import errors
@@ -14,6 +15,7 @@ from chirpQt.sources import base
 from chirpQt.wxui import fips
 
 LOG = logging.getLogger(__name__)
+_ = wx.GetTranslation
 
 NA_COUNTRIES = [
     'United States',
@@ -89,12 +91,10 @@ class RepeaterBook(base.NetworkResultRadio):
                                   state.lower().replace(' ', '_'))
         db_dir = chirp_platform.get_platform().config_file('repeaterbook')
         try:
-            os.mkdir(db_dir)
-        except FileExistsError:
-            pass
+            os.makedirs(db_dir, exist_ok=True)
         except Exception as e:
             LOG.exception('Failed to create %s: %s' % (db_dir, e))
-            status.set_fail('Internal error - check log')
+            status.send_fail('Internal error - check log')
             return
         data_file = os.path.join(db_dir, fn)
         try:
@@ -120,13 +120,24 @@ class RepeaterBook(base.NetworkResultRadio):
         if country in STATES:
             params['state'] = state
 
-        r = requests.get('https://www.repeaterbook.com/api/%s' % export,
-                         headers=base.HEADERS,
-                         params=params,
-                         stream=True)
+        try:
+            r = requests.get('https://www.repeaterbook.com/api/%s' % export,
+                             headers=base.HEADERS,
+                             params=params,
+                             stream=True)
+        except requests.exceptions.RequestException as e:
+            if modified:
+                status.send_status('Using cached data', 50)
+                LOG.warning('RepeaterBook query failed; using cached data: %s',
+                            e)
+                return data_file
+            status.send_fail('Unable to query RepeaterBook')
+            LOG.error('RepeaterBook query failed: %s', e)
+            return
         if r.status_code != 200:
             if modified:
                 status.send_status('Using cached data', 50)
+                return data_file
             status.send_fail('Got error code %i (%s) from server' % (
                 r.status_code, r.reason))
             LOG.error('Repeaterbook query %r returned %i (%s)',
@@ -136,13 +147,19 @@ class RepeaterBook(base.NetworkResultRadio):
         chunk_size = 8192
         probable_end = 3 << 20
         counter = 0
-        data = b''
-        with open(tmp, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=chunk_size):
-                f.write(chunk)
-                data += chunk
-                counter += len(chunk)
-                status.send_status('Downloading', counter / probable_end * 50)
+        data = bytearray()
+        try:
+            with open(tmp, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=chunk_size):
+                    f.write(chunk)
+                    data.extend(chunk)
+                    counter += len(chunk)
+                    status.send_status(
+                        'Downloading', counter / probable_end * 50)
+        except Exception:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            raise
         try:
             results = json.loads(data)
         except Exception as e:
@@ -151,15 +168,11 @@ class RepeaterBook(base.NetworkResultRadio):
                       r.url, r.status_code)
             LOG.error('Start of data:%s%s', os.linesep, data[:256])
             status.send_fail('RepeaterBook returned invalid response')
+            os.remove(tmp)
             return
 
-        if results['count']:
-            try:
-                os.rename(tmp, data_file)
-            except FileExistsError:
-                # Windows can't do atomic rename
-                os.remove(data_file)
-                os.rename(tmp, data_file)
+        if results.get('count'):
+            os.replace(tmp, data_file)
         else:
             os.remove(tmp)
             status.send_fail('No results!')
@@ -231,24 +244,27 @@ class RepeaterBook(base.NetworkResultRadio):
         return m
 
     def do_fetch(self, status, params):
-        lat = float(params.pop('lat') or 0)
-        lon = float(params.pop('lon') or 0)
-        dist = int(params.pop('dist') or 0)
-        search_filter = params.pop('filter', '')
+        params = params.copy()
+        lat = float(params.pop('lat', 0) or 0)
+        lon = float(params.pop('lon', 0) or 0)
+        dist = int(params.pop('dist', 0) or 0)
+        search_filter = params.pop('filter', '').casefold()
         bands = params.pop('bands', [])
         modes = params.pop('modes', [])
         fmconv = params.pop('fmconv', False)
-        openonly = params.pop('openonly')
-        cached = params.pop('cached')
+        openonly = params.pop('openonly', False)
+        cached = params.pop('cached', False)
+        self._memories = []
 
         data_file = self.get_data(status,
                                   params.get('country'),
-                                  params.pop('state'),
+                                  params.pop('state', ''),
                                   params.get('service', ''))
         if not data_file:
             return
 
-        data = json.loads(open(data_file, 'rb').read())
+        with open(data_file, 'rb') as data_stream:
+            data = json.load(data_stream)
         if lat and lon and dist and cached:
             self._merge_cached(params.get('service', ''),
                                params.get('country'),
@@ -256,27 +272,12 @@ class RepeaterBook(base.NetworkResultRadio):
 
         status.send_status('Parsing', 50)
 
-        def sorter(item):
-            if lat == 0 and lon == 0:
-                # No sort if not provided
-                return 0
-            if not item.get('Lat') or not item.get('Long'):
-                # Invalid or missing coordinates
-                return 0
-            return distance(lat, lon,
-                            float(item.get('Lat', 0)),
-                            float(item.get('Long', 0)))
-
         def match(item):
             search_fields = ('County', 'State', 'Landmark', 'Nearest City',
                              'Callsign', 'Region', 'Notes')
             content = ' '.join(item.get(k) or '' for k in search_fields
                                if k in item)
-            return (not search_filter or
-                    search_filter.lower() in content.lower())
-
-        def open_repeater(item):
-            return item['Use'] == 'OPEN'
+            return not search_filter or search_filter in content.casefold()
 
         def included_band(item):
             if not bands:
@@ -286,18 +287,33 @@ class RepeaterBook(base.NetworkResultRadio):
                     return True
             return False
 
-        i = 0
-        for item in sorted(data['results'], key=sorter):
+        located_items = []
+        for item in data.get('results', []):
             if not item:
                 continue
-            if openonly and not open_repeater(item):
+            item_distance = None
+            if lat and lon and item.get('Lat') and item.get('Long'):
+                try:
+                    item_distance = distance(
+                        lat, lon, float(item['Lat']), float(item['Long']))
+                except (TypeError, ValueError):
+                    pass
+            located_items.append((item, item_distance))
+
+        if lat and lon:
+            located_items.sort(key=lambda pair: (
+                pair[1] if pair[1] is not None else math.inf))
+
+        i = 0
+        for item, item_distance in located_items:
+            if openonly and item.get('Use') != 'OPEN':
                 continue
-            if item['Operational Status'] != 'On-air':
+            if item.get('Operational Status') != 'On-air':
                 continue
-            if dist and lat and lon and (
-                distance(lat, lon,
-                         float(item.get('Lat') or 0),
-                         float(item.get('Long') or 0)) > dist):
+            if dist and lat and lon and item_distance is None:
+                continue
+            if (dist and lat and lon and item_distance is not None and
+                    item_distance > dist):
                 continue
             if not match(item):
                 continue
@@ -307,7 +323,7 @@ class RepeaterBook(base.NetworkResultRadio):
                 m = self.item_to_memory(item)
             except Exception as e:
                 LOG.warning('Unable to convert repeater %s: %s',
-                            item['Rptr ID'], e)
+                            item.get('Rptr ID', 'unknown'), e)
                 continue
             if not m:
                 continue

@@ -146,7 +146,7 @@ class RadioReferenceRadio(base.NetworkResultRadio):
             for subcat in cat.subcats:
                 result = self._client.service.getSubcatFreqs(subcat.scid,
                                                              self._auth)
-                self._freqs += result
+                self._freqs.extend(result)
                 status_cur += 1
                 try:
                     status.send_status(
@@ -165,7 +165,7 @@ class RadioReferenceRadio(base.NetworkResultRadio):
                 for subcat in cat.subcats:
                     result = self._client.service.getSubcatFreqs(subcat.scid,
                                                                  self._auth)
-                    self._freqs += result
+                    self._freqs.extend(result)
                     status_cur += 1
                     try:
                         sc_name = subcat.scName
