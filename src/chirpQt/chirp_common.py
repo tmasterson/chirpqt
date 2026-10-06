@@ -919,7 +919,7 @@ def console_status(status):
 
 class RadioPrompts:
     """Radio prompt strings."""
-    
+
     info = None
     experimental = None
     pre_download = None

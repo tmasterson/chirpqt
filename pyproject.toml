@@ -7,7 +7,7 @@ name = "chirpQt"
 authors = [
     {name = "Tom Masterson", email = "kd7cyu@gmail.com"}
 ]
-description = "Rewrite of the chirp program using qt"
+description = "Rewrite of the chirp program using a web ui"
 readme = "README.md"
 classifiers = [
     "Private :: Do Not Upload",
@@ -18,7 +18,6 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "pyside6",
     "pyserial",
     "requests",
     "suds",
@@ -45,8 +44,6 @@ chirpQt = ["py.typed", "webui/static/*"]
 testpaths = ["src/tests"]
 log_file = "pytest.log"
 log_file_mode = "w"
-required_plugins = ["pytest-qt"]
-qt_api = "pyside6"
 addopts = [
     "--import-mode=importlib",
 ]
