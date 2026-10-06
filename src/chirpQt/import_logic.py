@@ -37,9 +37,9 @@ def ensure_has_calls(radio, memory):
     rlist = radio.get_repeater_call_list()
 
     if memory.dv_urcall and memory.dv_urcall not in ulist:
-        for i in range(0, len(ulist)):
-            if not ulist[i].strip():
-                ulist[i] = memory.dv_urcall
+        for index, call in enumerate(ulist):
+            if not call.strip():
+                ulist[index] = memory.dv_urcall
                 ulist_changed = True
                 break
         if not ulist_changed:
@@ -54,9 +54,9 @@ def ensure_has_calls(radio, memory):
 
     while rlist_add:
         call = rlist_add.pop()
-        for i in range(0, len(rlist)):
-            if not rlist[i].strip():
-                rlist[i] = call
+        for index, existing_call in enumerate(rlist):
+            if not existing_call.strip():
+                rlist[index] = call
                 call = None
                 rlist_changed = True
                 break
@@ -73,8 +73,8 @@ def _import_freq(dst_radio, _srcrf, mem):
     dst_bands = dst_radio.get_features().valid_bands
     if not any(lo < mem.freq <= hi for (lo, hi) in dst_bands):
         raise DestNotCompatible(
-            _('Frequency %s is out of supported range') % (
-                chirp_common.format_freq(mem.freq)))
+            'Frequency %s is out of supported range' %
+            chirp_common.format_freq(mem.freq))
 
 
 # Filter the name according to the destination's rules
@@ -83,14 +83,15 @@ def _import_name(dst_radio, _srcrf, mem):
 
 
 def find_closest_power(needle_watts, levels_haystack):
-    deltas = [abs(needle_watts - chirp_common.dBm_to_watts(int(power)))
-              for power in levels_haystack]
-    return levels_haystack[deltas.index(min(deltas))]
+    return min(
+        levels_haystack,
+        key=lambda power: abs(
+            needle_watts - chirp_common.dBm_to_watts(int(power))))
 
 
 def _import_power(dst_radio, _srcrf, mem):
-    levels = dst_radio.get_features().valid_power_levels
     dstrf = dst_radio.get_features()
+    levels = dstrf.valid_power_levels
     if not levels:
         mem.power = None
         return
@@ -230,9 +231,11 @@ def _import_duplex(dst_radio, srcrf, mem):
         mem.duplex = ''
 
 
-def import_mem(dst_radio, src_features, src_mem, overrides={}, mem_cls=None):
+def import_mem(dst_radio, src_features, src_mem, overrides=None, mem_cls=None):
     """Perform import logic to create a destination memory from
     src_mem that will be compatible with @dst_radio"""
+    if overrides is None:
+        overrides = {}
     dst_rf = dst_radio.get_features()
 
     if isinstance(src_mem, chirp_common.DVMemory):
@@ -260,14 +263,15 @@ def import_mem(dst_radio, src_features, src_mem, overrides={}, mem_cls=None):
     for k, v in overrides.items():
         dst_mem.__dict__[k] = v
 
-    helpers = [_import_freq,
-               _import_name,
-               _import_power,
-               _import_tone,
-               _import_dtcs,
-               _import_mode,
-               _import_duplex,
-               ]
+    helpers = (
+        _import_freq,
+        _import_name,
+        _import_power,
+        _import_tone,
+        _import_dtcs,
+        _import_mode,
+        _import_duplex,
+    )
 
     for helper in helpers:
         helper(dst_radio, src_features, dst_mem)

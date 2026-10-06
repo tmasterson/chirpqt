@@ -18,6 +18,10 @@ repos:
     - id: pep8
       verbose: true
       name: pep8
-      entry: env PATH=.tox/style/bin python tools/cpep8.py
-      files: \.py$
+      entry: python src/tools/cpep8.py
+      files: ^src/.*\.py$
+      exclude: ^src/chirpQt/drivers/
       language: python
+      additional_dependencies:
+        - pep8
+        - flake8

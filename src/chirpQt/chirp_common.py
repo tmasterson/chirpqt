@@ -22,6 +22,7 @@ import logging
 import math
 import re
 import sys
+from functools import lru_cache
 
 from chirpQt import errors, memmap
 from chirpQt.__version__ import version
@@ -303,7 +304,9 @@ def parse_freq(freqstr: str) -> int:
 
 def format_freq(freq: int) -> str:
     """Format a frequency given in Hz as a string."""
-    return '%i.%06i' % (freq / 1000000, freq % 1000000)
+    sign = '-' if freq < 0 else ''
+    mhz, hz = divmod(abs(freq), 1000000)
+    return '%s%i.%06i' % (sign, mhz, hz)
 
 
 class ImmutableValueError(ValueError):
@@ -837,12 +840,20 @@ class StaticBankModel(BankModel):
 
     def __init__(self, radio, name='Banks', banks=10):
         """Construct object."""
+        if not isinstance(banks, int) or isinstance(banks, bool) or banks <= 0:
+            raise ValueError('banks must be a positive integer')
         super().__init__(radio, name=name)
         self._num_banks = banks
         self._rf = radio.get_features()
-        self._banks = []
-        for i in range(self._num_banks):
-            self._banks.append(StaticBank(self, i + 1, 'Bank'))
+        lo, hi = self._rf.memory_bounds
+        if (not isinstance(lo, int) or isinstance(lo, bool) or
+                not isinstance(hi, int) or isinstance(hi, bool) or hi < lo):
+            raise ValueError(
+                'memory_bounds must be an ordered pair of integers')
+        self._banks = [
+            StaticBank(self, i + 1, 'Bank')
+            for i in range(self._num_banks)
+        ]
 
     def get_num_mappings(self):
         """Return number of mappings."""
@@ -855,16 +866,24 @@ class StaticBankModel(BankModel):
     def get_mapping_memories(self, bank):
         """Return the memories in a bank."""
         lo, hi = self._rf.memory_bounds
-        count = (hi - lo + 1) / self._num_banks
-        offset = lo + ((bank.get_index() - 1) * count)
-        return [self._radio.get_memory(offset + i) for i in range(count)]
+        index = bank.get_index() - 1
+        if not 0 <= index < self._num_banks:
+            raise ValueError('Unknown bank index: %s' % bank.get_index())
+        total = hi - lo + 1
+        start = lo + (index * total // self._num_banks)
+        stop = lo + ((index + 1) * total // self._num_banks)
+        return [self._radio.get_memory(number)
+                for number in range(start, stop)]
 
     def get_memory_mappings(self, memory):
         """Return the mappings a memory is in."""
         lo, hi = self._rf.memory_bounds
-        mems = hi - lo + 1
-        count = mems // self._num_banks
-        return [self._banks[(memory.number - lo) // count]]
+        if not lo <= memory.number <= hi:
+            raise ValueError(
+                'Memory number is outside bounds: %s' % memory.number)
+        total = hi - lo + 1
+        index = (((memory.number - lo + 1) * self._num_banks) - 1) // total
+        return [self._banks[index]]
 
     def remove_memory_from_mapping(self, memory, mapping):
         """Remove a memory from a mapping."""
@@ -1900,28 +1919,37 @@ def make_is(stephz):
     return validator
 
 
+_STANDARD_STEPS = {
+    5.0: make_is(5000),
+    10.0: make_is(10000),
+    12.5: make_is(12500),
+    6.25: make_is(6250),
+    2.5: make_is(2500),
+    1.0: make_is(1000),
+    0.5: make_is(500),
+    0.25: make_is(250),
+    8.33: is_8_33,
+}
+_DEFAULT_ALLOWED_STEPS = (5.0, 10.0, 12.5, 6.25, 2.5, 8.33)
+_DEFAULT_ALLOWED_STEPS_SET = frozenset(_DEFAULT_ALLOWED_STEPS)
+
+
 def required_step(freq, allowed=None):
     """Return the simplest tuning step that is required to reach @freq."""
     if allowed is None:
-        allowed = [5.0, 10.0, 12.5, 6.25, 2.5, 8.33]
+        allowed = _DEFAULT_ALLOWED_STEPS
+        allowed_set = _DEFAULT_ALLOWED_STEPS_SET
+    else:
+        allowed = tuple(allowed)
+        allowed_set = set(allowed)
 
-    # These should be in order of most common to least common
-    steps = {
-        5.0: make_is(5000),
-        10.0: make_is(10000),
-        12.5: make_is(12500),
-        6.25: make_is(6250),
-        2.5: make_is(2500),
-        1.0: make_is(1000),
-        0.5: make_is(500),
-        0.25: make_is(250),
-        8.33: is_8_33,
-    }
+    # These are ordered from most common to least common.
+    steps = _STANDARD_STEPS
 
     # Try the above "standard" steps first in order
     required_step = None
     for step, validate in steps.items():
-        if step in allowed and validate(freq):
+        if step in allowed_set and validate(freq):
             return step
         elif validate(freq) and required_step is None:
             required_step = step
@@ -2155,18 +2183,24 @@ def split_tone_encode(mem):
             (rxmode, rxval, rxpol))
 
 
+@lru_cache(maxsize=64)
+def _sanitize_translation(validcharset, replacechar):
+    """Build a reusable translation map for ASCII characters."""
+    return {
+        code: replacechar
+        for code in range(256)
+        if chr(code) not in validcharset
+    }
+
+
 def sanitize_string(astring, validcharset=CHARSET_ASCII, replacechar='*'):
-    """Sanitize strings removing invalid cahars."""
-    myfilter = ''.join(
-        [
-            [replacechar, chr(x)][chr(x) in validcharset]
-            for x in range(256)
-        ])
-    return astring.translate(myfilter)
+    """Sanitize strings by replacing characters outside the valid set."""
+    return astring.translate(
+        _sanitize_translation(validcharset, replacechar))
 
 
-def is_version_newer(version):
-    """Return True if version is newer than ours."""
+def is_version_newer(candidate):
+    """Return True if candidate is newer than the installed version."""
 
     def get_version(v):
         if v.startswith('daily-'):
@@ -2179,20 +2213,21 @@ def is_version_newer(version):
         LOG.debug('Parsed version %r to %r' % (v, ver))
         return ver
 
-    from chirpQt.__version__ import version
+    from chirpQt.__version__ import version as installed_version
 
     try:
-        version = get_version(version)
+        candidate_version = get_version(candidate)
     except ValueError as e:
-        LOG.error('Failed to parse version %r: %s' % (version, e))
-        version = (0,)
+        LOG.error('Failed to parse candidate version %r: %s', candidate, e)
+        candidate_version = (0,)
     try:
-        my_version = get_version(version)
+        current_version = get_version(installed_version)
     except ValueError as e:
-        LOG.error('Failed to parse my version %r: %s' % (version, e))
-        my_version = (0,)
+        LOG.error('Failed to parse installed version %r: %s',
+                  installed_version, e)
+        current_version = (0,)
 
-    return version > my_version
+    return candidate_version > current_version
 
 
 def http_user_agent():

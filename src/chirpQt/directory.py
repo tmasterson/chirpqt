@@ -59,11 +59,12 @@ def enable_reregistrations():
 
 def register(cls):
     """Register radio @cls with the directory."""
-    global DRV_TO_RADIO
     ident = radio_class_id(cls)
-    if ident in list(DRV_TO_RADIO.keys()):
+    existing = DRV_TO_RADIO.get(ident)
+    if existing is not None:
         if ALLOW_DUPS:
-            LOG.warn("Replacing existing driver id `%s'" % ident)
+            LOG.warning("Replacing existing driver id `%s'", ident)
+            RADIO_TO_DRV.pop(existing, None)
         else:
             raise Exception("Duplicate radio driver id `%s'" % ident)
     elif ALLOW_DUPS:
@@ -112,8 +113,12 @@ def register_format(name, pattern, readonly=False):
     additional formats a driver can read (and write unless readonly is
     set).
     """
-    if (name, pattern) not in [(n, p) for n, p, r in AUX_FORMATS]:
-        if name in [x[0] for x in AUX_FORMATS]:
+    matching_format = any(
+        existing_name == name and existing_pattern == pattern
+        for existing_name, existing_pattern, _ in AUX_FORMATS)
+    if not matching_format:
+        if any(existing_name == name
+               for existing_name, _, _ in AUX_FORMATS):
             raise Exception('Duplicate format name %r' % name)
     AUX_FORMATS.add((name, pattern, readonly))
     return name
@@ -121,9 +126,9 @@ def register_format(name, pattern, readonly=False):
 
 def get_radio(driver):
     """Get radio driver class by identification string."""
-    if driver in DRV_TO_RADIO:
+    try:
         return DRV_TO_RADIO[driver]
-    else:
+    except KeyError:
         raise Exception("Unknown radio type `%s'" % driver)
 
 
@@ -230,7 +235,9 @@ def import_drivers(limit=None):
     driver_files = glob.glob(os.path.join(chirp_module_base,
                                           'drivers',
                                           '*.py'))
-    for driver_file in driver_files:
+    if limit:
+        limit = set(limit)
+    for driver_file in sorted(driver_files):
         module, ext = os.path.splitext(driver_file)
         driver_module = os.path.basename(module)
         if limit and driver_module not in limit:

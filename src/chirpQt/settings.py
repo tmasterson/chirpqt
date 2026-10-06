@@ -415,8 +415,7 @@ class RadioSettings(list):
         list.__init__(self, groups)
 
     def __str__(self):
-        items = [str(self[i]) for i in range(0, len(self))]
-        return "\n".join(items)
+        return "\n".join(map(str, self))
 
     def walk(self):
         """Iterate over all the RadioSettings in this tree
@@ -512,12 +511,12 @@ class RadioSettingGroup(object):
         self.__doc__ = doc
 
     def __str__(self):
-        string = "group '%s': {\n" % self._name
+        lines = ["group '%s': {\n" % self._name]
         for element in sorted(self._elements.values()):
             for line in str(element).split("\n"):
-                string += "\t" + line + "\n"
-        string += "}"
-        return string
+                lines.append("\t" + line + "\n")
+        lines.append("}")
+        return "".join(lines)
 
     # Kinda list interface
 
@@ -528,28 +527,7 @@ class RadioSettingGroup(object):
         self[element.get_name()] = element
 
     def __iter__(self):
-        class RSGIterator:
-
-            """Iterator for a RadioSettingGroup"""
-
-            def __init__(self, rsg):
-                self.__rsg = rsg
-                self.__i = 0
-
-            def __iter__(self):
-                return self
-
-            def next(self):
-                return self.__next__()
-
-            def __next__(self):
-                """Next Iterator Interface"""
-                if self.__i >= len(self.__rsg.keys()):
-                    raise StopIteration()
-                e = self.__rsg[self.__rsg.keys()[self.__i]]
-                self.__i += 1
-                return e
-        return RSGIterator(self)
+        return iter(self._elements.values())
 
     # Dictionary interface
 
@@ -714,6 +692,7 @@ class MemSetting(RadioSetting):
     """
     def __init__(self, path, name, value, **kwargs):
         self._path = path
+        self._path_elements = tuple(path.split('.'))
         setting_name = path.replace('.', '_')
         super().__init__(setting_name, name, value, **kwargs)
 
@@ -745,7 +724,7 @@ class MemSetting(RadioSetting):
             value = self.value._mem_vals[int(value)]
 
         obj = memobj
-        elements = self._path.split('.')
+        elements = self._path_elements
         for element in elements[:-1]:
             if '[' in element:
                 # foo[i] syntax

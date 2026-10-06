@@ -53,6 +53,8 @@ class Band(object):
             self.duplex = '+' if self.offset > 0 else '-'
 
     def __eq__(self, other):
+        if not isinstance(other, Band):
+            return NotImplemented
         return (other.limits[0] == self.limits[0] and
                 other.limits[1] == self.limits[1])
 
@@ -102,8 +104,12 @@ class BandPlans(object):
         if not self._config.is_defined("north_america", "bandplan"):
             self._config.set_bool("north_america", True, "bandplan")
 
-        from chirpQt import bandplan_na, bandplan_au
-        from chirpQt import bandplan_iaru_r1, bandplan_iaru_r2, bandplan_iaru_r3
+        from chirpQt import bandplan_au, bandplan_na
+        from chirpQt import (
+            bandplan_iaru_r1,
+            bandplan_iaru_r2,
+            bandplan_iaru_r3,
+        )
 
         for plan in (bandplan_na, bandplan_au, bandplan_iaru_r1,
                      bandplan_iaru_r2, bandplan_iaru_r3):
@@ -155,6 +161,8 @@ class BandPlans(object):
     def get_repeater_bands(self):
         bands_with_repeaters = []
         current_plan = self.get_enabled_plan()
+        if current_plan is None:
+            return bands_with_repeaters
 
         # For now, assume anything above 28 MHz could have a repeater.
         # Alternately, we could scan for bands with repeater sub-bands and only
@@ -173,9 +181,10 @@ class BandPlans(object):
             bands_with_repeaters.append(b)
 
         for band in current_plan.bands:
+            band_name = band.name.lower()
             if (band.limits[0] >= min_freq and
-                    (band.name.lower().endswith('meter band') or
-                     band.name.lower().endswith('cm band'))):
+                    (band_name.endswith('meter band') or
+                     band_name.endswith('cm band'))):
                 add_nodupes(band)
         return sorted(bands_with_repeaters,
                       key=lambda b: b.limits[0])
